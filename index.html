@@ -188,7 +188,7 @@
 
   indices = list(np.arange(len(train_paths)))
   random.shuffle(indices)
-  train_set_size = int(len(indices) * 0.8)  # Random split data to 80% training and 20% testing
+  train_set_size = int(len(indices) * 0.8)  # Random split data to 80% training and 20% validation
   validation_set_size = len(indices) - train_set_size
   train_indices, validation_indices = torch.utils.data.random_split(indices, [train_set_size, validation_set_size])
 </pre>
