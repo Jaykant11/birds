@@ -13,9 +13,9 @@
     <iframe width="560" height="315" src="https://www.youtube.com/embed/jfKfPfyJRdk" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>  
   </p>
   <h2>About Our Project</h2>
-  <p>summary here</p>
-  <h3>Our Jupyter Notebooks</h3>
-  <p>link to notebooks here</p>
+  <p>This document represents the culmination of our efforts in the CSE455 Computer Vision course during the Winter 2023 quarter. Throughout this project, we have documented our journey as we delved deeper into the intricacies of convolutional neural networks and the process of image classification.
+    We have use two pre-existing neural network architecture called vgg19_bn and Resnet50. Also, we have based off our code from the lectures and added our flavor to it.
+  </p>
   <style>
     h4 + ul{
         margin-top:-1em;
@@ -64,7 +64,1662 @@
         background-repeat:repeat;
         background-color:#001;
     }
+
+    .code-block {
+      display: block;
+      font-size: 10px;
+
+    }
+
+    .python {
+      background-color: #eee;
+      border: 1px solid #999;
+      padding: 20px;
+    }
+
+    .loss-graph{
+      width: 400px;
+      height: 250px;
+    }
+
+    .submission-file{
+      width: 320px;
+      height: 250px;
+    }
+
+    .transform-birds{
+      width: 700px;
+      height: 200px;
+    }
+
+    h3 {
+      margin-left:-80px;
+    }
+
+    i{
+      color: rgb(26, 106, 186);
+    }
+
   </style>
+
+  <h3>Imports</h3>
+
+  <pre class="code-block python">
+    import numpy as np
+    import matplotlib.pyplot as plt
+
+    import torch
+    import pandas
+    import torchvision
+    import torchvision.transforms as transforms
+    import torch.nn as nn
+    import torch.nn.functional as F
+    import torch.optim as optim
+    from torch.cuda.amp import autocast, GradScaler
+    from pathlib import Path
+    from PIL import Image
+
+    import gc
+    import glob
+    import random
+    import os
+  </pre>
+
+<pre class="code-block python">
+  device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+  print(device)
+</pre>
+<pre class="code-block output">
+  cuda:0
+</pre>
+
+<pre class="code-block python">
+  <i>seed_everything function with a seed value of 42, which will ensure that the random number generators produce
+  the same sequence of numbers every time the code is run.</i>
+
+  
+  def seed_everything(seed=1234):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
+
+  seed_everything(42)
+</pre>
+
+<pre class="code-block python">
+  <i>Let's define a path of input data and a path to store all checkpoints</i>
+
+
+  PATH = '/kaggle/input/birds23wi/birds/'
+  CHECKPOINTS = '/kaggle/working/restnet50/';
+  if not os.path.exists(CHECKPOINTS):
+    os.makedirs(CHECKPOINTS)
+</pre>
+
+<pre class="code-block python">
+  <i>This code defines an empty list called train_paths, and then populates it with the file paths of all images in
+  a directory structure located at PATH + 'train/*'.</i>
+
+
+  train_paths = []
+  file_list = glob.glob(PATH + 'train/*')
+  for f in file_list:
+    img_list = glob.glob(f + '/*')
+    for i in img_list:
+      class_name = i.split("/")[-1]
+      train_paths.append(i)
+</pre>
+
+<pre class="code-block python">
+  <i>This code shuffles the order of items in the train_paths list randomly using the shuffle() function from Python's
+  built-in random module.</i>
+
+
+  random.shuffle(train_paths)
+</pre>
+
+<pre class="code-block python">
+  <i>This code is used to randomly split a dataset into training and validation sets using PyTorch's random_split
+  function. Here's a breakdown of what each line does:</i>
+
+
+  indices = list(np.arange(len(train_paths)))
+  random.shuffle(indices)
+  train_set_size = int(len(indices) * 0.8)  # Random split data to 80% training and 20% testing
+  validation_set_size = len(indices) - train_set_size
+  train_indices, validation_indices = torch.utils.data.random_split(indices, [train_set_size, validation_set_size])
+</pre>
+
+<h3>Creating Dataloaders</h3>
+
+<pre class="code-block python">
+  <i>This code defines a function get_bird_data that creates PyTorch DataLoader objects for the training, validation,
+  and test sets of a bird image classification dataset. </i>
+
+
+  def get_bird_data(augmentation=0):
+    transform_train = transforms.Compose([
+        transforms.Resize(224),
+        transforms.RandomCrop(224, padding=8, padding_mode='edge'), # Take 224x224 crops from padded images
+        transforms.RandomHorizontalFlip(),    # 50% of time flip image along y-axis
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    
+    transform_validation = transforms.Compose([
+        transforms.Resize(224),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    
+    trainset = torchvision.datasets.ImageFolder(root=PATH+'train', transform=transform_train)
+    trainsubset = torch.utils.data.Subset(trainset, train_indices)
+    trainloader = torch.utils.data.DataLoader(trainsubset, batch_size=128, shuffle=True, num_workers=2)
+
+    validationset = torchvision.datasets.ImageFolder(root=PATH+'train', transform=transform_validation)
+    validationsubset = torch.utils.data.Subset(validationset, validation_indices)
+    validationloader = torch.utils.data.DataLoader(validationsubset, batch_size=1, shuffle=False, num_workers=2)
+    
+    testset = torchvision.datasets.ImageFolder(root=PATH+'test', transform=transform_validation)
+    testloader = torch.utils.data.DataLoader(testset, batch_size=1, shuffle=False, num_workers=2)
+    
+    classes = open(PATH + 'names.txt').read().strip().split("\n") # array of names of birds
+    class_to_idx = trainset.class_to_idx # dictionary from class names to integer index. like { 'cat': 0, 'dog': 1}
+    idx_to_class = {int(v): int(k) for k, v in class_to_idx.items()} # opposite of above
+    idx_to_name = {k: classes[v] for k,v in idx_to_class.items()}
+    return {'train': trainloader, 'validation': validationloader, 
+      'test': testloader, 'to_class': idx_to_class, 'to_name':idx_to_name}
+
+  data = get_bird_data()
+</pre>
+<pre class="code-block python">
+  <i>Let's see how training images looks like after applying transforms</i>
+
+
+  dataiter = iter(data['train'])
+  images, labels = next(dataiter)
+  images = images[:16]
+  print(images.size())
+
+  def imshow(img):
+      npimg = img.numpy()
+      fig, ax = plt.subplots(figsize=(20, 20))
+      ax.imshow(np.transpose(npimg, (1, 2, 0)))
+      plt.show()
+      
+  # show images
+  imshow(torchvision.utils.make_grid(images))
+  # print labels
+  print("Labels:" + ', '.join('%9s' % data['to_name'][labels[j].item()] for j in range(16)))
+</pre>
+
+<pre class="code-block output">
+  <img class="transform-birds" src="/Users/jayhirpara/Desktop/notebook images/transform_birds.png">
+</pre>
+
+<h3>Train Model Functions</h3>
+<pre class="code-block python">
+  <i>This function trains a neural network on a given dataset using stochastic gradient descent (SGD) optimizer.
+  It takes as input the neural network to train, a dataloader for the dataset, the number of epochs to train for,
+  the learning rate, the momentum and weight decay values for the optimizer, and other optional parameters.</i>
+
+
+  def train(net, dataloader, epochs=14, start_epoch=0, lr=0.01, momentum=0.9, decay=0.0005, 
+    verbose=1, print_every=10, state=None, schedule = {}, checkpoint_path=None):
+
+    gc.collect()
+    torch.cuda.empty_cache()
+    net.to(device)
+    net.train()
+    losses = []
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(net.parameters(), lr=lr, momentum=momentum, weight_decay=decay)
+    #     optimizer = optim.Adam(net.parameters(), lr=lr, weight_decay=decay)
+
+    # Load previous training state
+    if state:
+    net.load_state_dict(state['net'])
+    optimizer.load_state_dict(state['optimizer'])
+    start_epoch = state['epoch']
+    losses = state['losses']
+
+    # Fast forward lr schedule through already trained epochs
+    for epoch in range(start_epoch):
+    if epoch in schedule:
+        print ("Learning rate: %f"% schedule[epoch])
+        for g in optimizer.param_groups:
+            g['lr'] = schedule[epoch]
+
+    for epoch in range(start_epoch, epochs):
+    sum_loss = 0.0
+
+    # Update learning rate when scheduled
+    if epoch in schedule:
+        print ("Learning rate: %f"% schedule[epoch])
+        for g in optimizer.param_groups:
+            g['lr'] = schedule[epoch]
+
+    for i, batch in enumerate(dataloader, 0):
+        inputs, labels = batch[0].to(device), batch[1].to(device)
+
+        optimizer.zero_grad()
+
+        outputs = net(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()  # autograd magic, computes all the partial derivatives
+        optimizer.step() # takes a step in gradient direction
+
+        losses.append(loss.item())
+        sum_loss += loss.item()
+
+        if i % print_every == print_every-1:    # print every 10 mini-batches
+            if verbose:
+              print('[%d, %5d] loss: %.3f' % (epoch, i + 1, sum_loss / print_every))
+            sum_loss = 0.0
+            
+    gc.collect()
+    torch.cuda.empty_cache()
+
+    if checkpoint_path:
+        state = {'epoch': epoch+1, 'net': net.state_dict(), 'optimizer': optimizer.state_dict(), 'losses': losses}
+        torch.save(state, checkpoint_path + 'checkpoint-%d.pkl'%(epoch+1))
+        
+    return losses
+
+
+
+  <i>applies a moving average smoothing to a one-dimensional numpy array x, using a window of size size. The function
+  returns the smoothed array with the same length as the original x array.</i>
+
+
+  def smooth(x, size):
+    return np.convolve(x, np.ones(size)/size, mode='valid')
+
+
+
+  <i>This function takes a trained neural network model, a data loader, and an output filename as inputs, and generates
+  predictions for the test data.</i>
+
+
+  def predict(net, dataloader, ofname):
+    out = open(ofname, 'w')
+    out.write("path,class\n")
+    net.to(device)
+    net.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+    for i, (images, labels) in enumerate(dataloader, 0):
+        if i%100 == 0:
+            print(i)
+        images, labels = images.to(device), labels.to(device)
+        net.to(device)
+        net.eval()
+        outputs = net(images)
+        _, predicted = torch.max(outputs.data, 1)
+        fname, _ = dataloader.dataset.samples[i]
+        out.write("test/{},{}\n".format(fname.split('/')[-1], data['to_class'][predicted.item()]))
+    out.close()
+  
+
+
+  <i>This function gives the accuracy of the network given dataloader</i>
+
+
+  def accuracy(net, dataloader):
+    net.to(device)
+    net.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+    for batch in dataloader:
+        images, labels = batch[0].to(device), batch[1].to(device)
+        outputs = net(images)
+        _, predicted = torch.max(outputs.data, 1)
+        total += labels.size(0)
+        correct += (predicted == labels).sum().item()
+    return correct/total
+</pre>
+
+<h3>Resnet50</h3>
+
+<pre class="code-block python">
+  resnet50 = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=True)
+  resnet50.fc = nn.Linear(resnet50.fc.in_features, out_features=555, bias=True)
+  losses = train(resnet50, data['train'], print_every=10, checkpoint_path=CHECKPOINTS)
+  
+  plt.plot(smooth(losses,50))
+</pre>
+
+<pre class="code-block output">
+  [0,    10] loss: 6.334
+  [0,    20] loss: 6.256
+  [0,    30] loss: 6.120
+  [0,    40] loss: 5.902
+  [0,    50] loss: 5.748
+  [0,    60] loss: 5.487
+  [0,    70] loss: 5.177
+  [0,    80] loss: 4.945
+  [0,    90] loss: 4.705
+  [0,   100] loss: 4.460
+  [0,   110] loss: 4.268
+  [0,   120] loss: 4.076
+  [0,   130] loss: 3.893
+  [0,   140] loss: 3.784
+  [0,   150] loss: 3.636
+  [0,   160] loss: 3.479
+  [0,   170] loss: 3.374
+  [0,   180] loss: 3.188
+  [0,   190] loss: 3.190
+  [0,   200] loss: 3.036
+  [0,   210] loss: 3.013
+  [0,   220] loss: 2.902
+  [0,   230] loss: 2.795
+  [0,   240] loss: 2.758
+  [1,    10] loss: 2.920
+  [1,    20] loss: 2.604
+  [1,    30] loss: 2.404
+  [1,    40] loss: 2.377
+  [1,    50] loss: 2.348
+  [1,    60] loss: 2.282
+  [1,    70] loss: 2.172
+  [1,    80] loss: 2.174
+  [1,    90] loss: 2.111
+  [1,   100] loss: 2.102
+  [1,   110] loss: 2.034
+  [1,   120] loss: 1.968
+  [1,   130] loss: 1.982
+  [1,   140] loss: 1.904
+  [1,   150] loss: 1.898
+  [1,   160] loss: 1.840
+  [1,   170] loss: 1.847
+  [1,   180] loss: 1.839
+  [1,   190] loss: 1.727
+  [1,   200] loss: 1.748
+  [1,   210] loss: 1.690
+  [1,   220] loss: 1.755
+  [1,   230] loss: 1.645
+  [1,   240] loss: 1.618
+  [2,    10] loss: 1.842
+  [2,    20] loss: 1.519
+  [2,    30] loss: 1.489
+  [2,    40] loss: 1.432
+  [2,    50] loss: 1.399
+  [2,    60] loss: 1.423
+  [2,    70] loss: 1.409
+  [2,    80] loss: 1.344
+  [2,    90] loss: 1.338
+  [2,   100] loss: 1.312
+  [2,   110] loss: 1.327
+  [2,   120] loss: 1.246
+  [2,   130] loss: 1.247
+  [2,   140] loss: 1.305
+  [2,   150] loss: 1.224
+  [2,   160] loss: 1.230
+  [2,   170] loss: 1.206
+  [2,   180] loss: 1.229
+  [2,   190] loss: 1.262
+  [2,   200] loss: 1.214
+  [2,   210] loss: 1.217
+  [2,   220] loss: 1.190
+  [2,   230] loss: 1.151
+  [2,   240] loss: 1.197
+  [3,    10] loss: 1.416
+  [3,    20] loss: 1.092
+  [3,    30] loss: 1.093
+  [3,    40] loss: 1.057
+  [3,    50] loss: 1.043
+  [3,    60] loss: 1.081
+  [3,    70] loss: 1.036
+  [3,    80] loss: 1.028
+  [3,    90] loss: 1.040
+  [3,   100] loss: 0.984
+  [3,   110] loss: 0.963
+  [3,   120] loss: 0.920
+  [3,   130] loss: 1.005
+  [3,   140] loss: 0.995
+  [3,   150] loss: 0.996
+  [3,   160] loss: 0.976
+  [3,   170] loss: 0.938
+  [3,   180] loss: 0.989
+  [3,   190] loss: 0.943
+  [3,   200] loss: 0.946
+  [3,   210] loss: 0.971
+  [3,   220] loss: 0.941
+  [3,   230] loss: 1.002
+  [3,   240] loss: 0.975
+  [4,    10] loss: 1.205
+  [4,    20] loss: 0.920
+  [4,    30] loss: 0.808
+  [4,    40] loss: 0.795
+  [4,    50] loss: 0.841
+  [4,    60] loss: 0.797
+  [4,    70] loss: 0.787
+  [4,    80] loss: 0.800
+  [4,    90] loss: 0.762
+  [4,   100] loss: 0.786
+  [4,   110] loss: 0.778
+  [4,   120] loss: 0.785
+  [4,   130] loss: 0.816
+  [4,   140] loss: 0.817
+  [4,   150] loss: 0.801
+  [4,   160] loss: 0.786
+  [4,   170] loss: 0.789
+  [4,   180] loss: 0.765
+  [4,   190] loss: 0.752
+  [4,   200] loss: 0.810
+  [4,   210] loss: 0.819
+  [4,   220] loss: 0.776
+  [4,   230] loss: 0.774
+  [4,   240] loss: 0.754
+  [5,    10] loss: 1.010
+  [5,    20] loss: 0.767
+  [5,    30] loss: 0.775
+  [5,    40] loss: 0.702
+  [5,    50] loss: 0.686
+  [5,    60] loss: 0.659
+  [5,    70] loss: 0.622
+  [5,    80] loss: 0.646
+  [5,    90] loss: 0.673
+  [5,   100] loss: 0.632
+  [5,   110] loss: 0.619
+  [5,   120] loss: 0.647
+  [5,   130] loss: 0.623
+  [5,   140] loss: 0.634
+  [5,   150] loss: 0.633
+  [5,   160] loss: 0.654
+  [5,   170] loss: 0.665
+  [5,   180] loss: 0.606
+  [5,   190] loss: 0.688
+  [5,   200] loss: 0.616
+  [5,   210] loss: 0.654
+  [5,   220] loss: 0.629
+  [5,   230] loss: 0.607
+  [5,   240] loss: 0.602
+  [6,    10] loss: 0.876
+  [6,    20] loss: 0.648
+  [6,    30] loss: 0.644
+  [6,    40] loss: 0.572
+  [6,    50] loss: 0.573
+  [6,    60] loss: 0.518
+  [6,    70] loss: 0.540
+  [6,    80] loss: 0.543
+  [6,    90] loss: 0.513
+  [6,   100] loss: 0.586
+  [6,   110] loss: 0.492
+  [6,   120] loss: 0.543
+  [6,   130] loss: 0.562
+  [6,   140] loss: 0.529
+  [6,   150] loss: 0.570
+  [6,   160] loss: 0.569
+  [6,   170] loss: 0.531
+  [6,   180] loss: 0.595
+  [6,   190] loss: 0.532
+  [6,   200] loss: 0.554
+  [6,   210] loss: 0.557
+  [6,   220] loss: 0.547
+  [6,   230] loss: 0.539
+  [6,   240] loss: 0.554
+  [7,    10] loss: 0.823
+  [7,    20] loss: 0.619
+  [7,    30] loss: 0.568
+  [7,    40] loss: 0.483
+  [7,    50] loss: 0.512
+  [7,    60] loss: 0.491
+  [7,    70] loss: 0.456
+  [7,    80] loss: 0.452
+  [7,    90] loss: 0.503
+  [7,   100] loss: 0.482
+  [7,   110] loss: 0.444
+  [7,   120] loss: 0.487
+  [7,   130] loss: 0.484
+  [7,   140] loss: 0.501
+  [7,   150] loss: 0.507
+  [7,   160] loss: 0.465
+  [7,   170] loss: 0.448
+  [7,   180] loss: 0.465
+  [7,   190] loss: 0.445
+  [7,   200] loss: 0.441
+  [7,   210] loss: 0.476
+  [7,   220] loss: 0.453
+  [7,   230] loss: 0.485
+  [7,   240] loss: 0.486
+  [8,    10] loss: 0.685
+  [8,    20] loss: 0.489
+  [8,    30] loss: 0.512
+  [8,    40] loss: 0.459
+  [8,    50] loss: 0.406
+  [8,    60] loss: 0.417
+  [8,    70] loss: 0.392
+  [8,    80] loss: 0.422
+  [8,    90] loss: 0.407
+  [8,   100] loss: 0.398
+  [8,   110] loss: 0.442
+  [8,   120] loss: 0.421
+  [8,   130] loss: 0.416
+  [8,   140] loss: 0.432
+  [8,   150] loss: 0.432
+  [8,   160] loss: 0.422
+  [8,   170] loss: 0.412
+  [8,   180] loss: 0.441
+  [8,   190] loss: 0.428
+  [8,   200] loss: 0.421
+  [8,   210] loss: 0.398
+  [8,   220] loss: 0.418
+  [8,   230] loss: 0.424
+  [8,   240] loss: 0.433
+  [9,    10] loss: 0.706
+  [9,    20] loss: 0.487
+  [9,    30] loss: 0.403
+  [9,    40] loss: 0.398
+  [9,    50] loss: 0.376
+  [9,    60] loss: 0.364
+  [9,    70] loss: 0.352
+  [9,    80] loss: 0.335
+  [9,    90] loss: 0.329
+  [9,   100] loss: 0.366
+  [9,   110] loss: 0.347
+  [9,   120] loss: 0.362
+  [9,   130] loss: 0.346
+  [9,   140] loss: 0.335
+  [9,   150] loss: 0.341
+  [9,   160] loss: 0.333
+  [9,   170] loss: 0.359
+  [9,   180] loss: 0.364
+  [9,   190] loss: 0.370
+  [9,   200] loss: 0.384
+  [9,   210] loss: 0.357
+  [9,   220] loss: 0.406
+  [9,   230] loss: 0.395
+  [9,   240] loss: 0.318
+  [10,    10] loss: 0.620
+  [10,    20] loss: 0.412
+  [10,    30] loss: 0.364
+  [10,    40] loss: 0.351
+  [10,    50] loss: 0.333
+  [10,    60] loss: 0.317
+  [10,    70] loss: 0.321
+  [10,    80] loss: 0.331
+  [10,    90] loss: 0.298
+  [10,   100] loss: 0.337
+  [10,   110] loss: 0.302
+  [10,   120] loss: 0.300
+  [10,   130] loss: 0.331
+  [10,   140] loss: 0.324
+  [10,   150] loss: 0.320
+  [10,   160] loss: 0.303
+  [10,   170] loss: 0.317
+  [10,   180] loss: 0.324
+  [10,   190] loss: 0.318
+  [10,   200] loss: 0.320
+  [10,   210] loss: 0.323
+  [10,   220] loss: 0.331
+  [10,   230] loss: 0.333
+  [10,   240] loss: 0.325
+  [11,    10] loss: 0.586
+  [11,    20] loss: 0.342
+  [11,    30] loss: 0.368
+  [11,    40] loss: 0.342
+  [11,    50] loss: 0.280
+  [11,    60] loss: 0.285
+  [11,    70] loss: 0.285
+  [11,    80] loss: 0.260
+  [11,    90] loss: 0.267
+  [11,   100] loss: 0.280
+  [11,   110] loss: 0.305
+  [11,   120] loss: 0.275
+  [11,   130] loss: 0.284
+  [11,   140] loss: 0.253
+  [11,   150] loss: 0.243
+  [11,   160] loss: 0.277
+  [11,   170] loss: 0.260
+  [11,   180] loss: 0.263
+  [11,   190] loss: 0.296
+  [11,   200] loss: 0.254
+  [11,   210] loss: 0.269
+  [11,   220] loss: 0.270
+  [11,   230] loss: 0.314
+  [11,   240] loss: 0.303
+  [12,    10] loss: 0.524
+  [12,    20] loss: 0.341
+  [12,    30] loss: 0.313
+  [12,    40] loss: 0.300
+  [12,    50] loss: 0.295
+  [12,    60] loss: 0.255
+  [12,    70] loss: 0.267
+  [12,    80] loss: 0.273
+  [12,    90] loss: 0.233
+  [12,   100] loss: 0.239
+  [12,   110] loss: 0.243
+  [12,   120] loss: 0.252
+  [12,   130] loss: 0.250
+  [12,   140] loss: 0.246
+  [12,   150] loss: 0.264
+  [12,   160] loss: 0.271
+  [12,   170] loss: 0.250
+  [12,   180] loss: 0.275
+  [12,   190] loss: 0.260
+  [12,   200] loss: 0.276
+  [12,   210] loss: 0.252
+  [12,   220] loss: 0.288
+  [12,   230] loss: 0.253
+  [12,   240] loss: 0.260
+  [13,    10] loss: 0.529
+  [13,    20] loss: 0.316
+  [13,    30] loss: 0.281
+  [13,    40] loss: 0.266
+  [13,    50] loss: 0.254
+  [13,    60] loss: 0.238
+  [13,    70] loss: 0.255
+  [13,    80] loss: 0.216
+  [13,    90] loss: 0.210
+  [13,   100] loss: 0.224
+  [13,   110] loss: 0.232
+  [13,   120] loss: 0.197
+  [13,   130] loss: 0.235
+  [13,   140] loss: 0.212
+  [13,   150] loss: 0.206
+  [13,   160] loss: 0.220
+  [13,   170] loss: 0.198
+  [13,   180] loss: 0.216
+  [13,   190] loss: 0.210
+  [13,   200] loss: 0.218
+  [13,   210] loss: 0.239
+  [13,   220] loss: 0.217
+  [13,   230] loss: 0.206
+  [13,   240] loss: 0.209
+
+  <img class="loss-graph" src="/Users/jayhirpara/Desktop/notebook images/resnet50graph.png">
+</pre>
+
+<pre class="code-block python">
+  print("Validation  accuracy: %f" % accuracy(resnet50, data['validation']))
+</pre>
+
+<pre class="code-block output">
+  Validation  accuracy: 0.762479
+</pre>
+
+<pre class="code-block python">
+  <i>Let's train the model again by only loading the state of previous model excluding the state of optimizer.
+  This approach bumped up the accuracy a little.</i>
+
+
+  resnet50 = torch.hub.load('pytorch/vision:v0.10.0', 'resnet50', pretrained=True)
+  resnet50.fc = nn.Linear(resnet50.fc.in_features, out_features=555, bias=True)
+  state = torch.load('/kaggle/working/restnet50/checkpoint-14.pkl')
+  resnet50.load_state_dict(state['net'])
+  losses = train(resnet50, data['train'], print_every=10, checkpoint_path=CHECKPOINTS, lr=0.001, epochs=1)
+</pre>
+
+<pre class="code-block python">
+  <i>Let's see the accuracy of our resnet50</i>
+
+
+  print("Validation  accuracy: %f" % accuracy(resnet50, data['validation']))
+</pre>
+
+<pre class="code-block output">
+  Validation  accuracy: 0.818099
+</pre>
+
+<pre class="code-block python">
+  <i>Let's predict the output of test data and store the result.</i>
+
+
+  predict(resnet50, data['test'], CHECKPOINTS + 'submissions.csv')
+  pandas.read_csv(CHECKPOINTS + 'submissions.csv')
+</pre>
+
+<pre class="code-block output">
+  <img class="submission-file" src="/Users/jayhirpara/Desktop/notebook images/submissionfile.png">
+</pre>
+
+<h3>VGG19 bn</h3>
+
+<pre class="code-block python">
+  vgg19_bn = torch.hub.load('pytorch/vision:v0.10.0', 'vgg19_bn', pretrained=True)
+  vgg19_bn.classifier[6] = nn.Linear(4096, 555)
+  losses = train(vgg19_bn, data['train'], print_every=10, checkpoint_path=CHECKPOINTS, ephochs=19,
+    schedule={0: 0.01, 9: 0.001, 16: 0.0001})
+
+  plt.plot(smooth(losses,50))
+</pre>
+
+<pre class="code-block output">
+  Learning rate: 0.010000
+  [0,    10] loss: 6.345
+  [0,    20] loss: 6.146
+  [0,    30] loss: 5.854
+  [0,    40] loss: 5.515
+  [0,    50] loss: 5.259
+  [0,    60] loss: 4.810
+  [0,    70] loss: 4.581
+  [0,    80] loss: 4.340
+  [0,    90] loss: 4.192
+  [0,   100] loss: 4.119
+  [0,   110] loss: 3.899
+  [0,   120] loss: 3.959
+  [0,   130] loss: 3.774
+  [0,   140] loss: 3.820
+  [0,   150] loss: 3.495
+  [0,   160] loss: 3.514
+  [0,   170] loss: 3.481
+  [0,   180] loss: 3.386
+  [0,   190] loss: 3.178
+  [0,   200] loss: 3.252
+  [0,   210] loss: 3.235
+  [0,   220] loss: 3.221
+  [0,   230] loss: 3.232
+  [0,   240] loss: 3.348
+  [0,   250] loss: 3.117
+  [0,   260] loss: 2.789
+  [0,   270] loss: 2.924
+  [0,   280] loss: 2.963
+  [0,   290] loss: 2.923
+  [0,   300] loss: 2.789
+  [0,   310] loss: 2.906
+  [0,   320] loss: 2.856
+  [0,   330] loss: 2.761
+  [0,   340] loss: 2.726
+  [0,   350] loss: 2.734
+  [0,   360] loss: 2.568
+  [0,   370] loss: 2.706
+  [0,   380] loss: 2.569
+  [0,   390] loss: 2.689
+  [0,   400] loss: 2.658
+  [0,   410] loss: 2.497
+  [0,   420] loss: 2.479
+  [0,   430] loss: 2.654
+  [0,   440] loss: 2.492
+  [0,   450] loss: 2.297
+  [0,   460] loss: 2.509
+  [0,   470] loss: 2.345
+  [0,   480] loss: 2.438
+  [1,    10] loss: 2.694
+  [1,    20] loss: 2.352
+  [1,    30] loss: 2.326
+  [1,    40] loss: 2.218
+  [1,    50] loss: 2.300
+  [1,    60] loss: 2.289
+  [1,    70] loss: 2.160
+  [1,    80] loss: 2.078
+  [1,    90] loss: 2.088
+  [1,   100] loss: 2.126
+  [1,   110] loss: 2.080
+  [1,   120] loss: 2.086
+  [1,   130] loss: 2.198
+  [1,   140] loss: 2.163
+  [1,   150] loss: 2.142
+  [1,   160] loss: 2.092
+  [1,   170] loss: 1.975
+  [1,   180] loss: 2.237
+  [1,   190] loss: 2.039
+  [1,   200] loss: 2.098
+  [1,   210] loss: 2.116
+  [1,   220] loss: 2.109
+  [1,   230] loss: 1.904
+  [1,   240] loss: 1.981
+  [1,   250] loss: 1.919
+  [1,   260] loss: 1.966
+  [1,   270] loss: 2.085
+  [1,   280] loss: 1.963
+  [1,   290] loss: 2.153
+  [1,   300] loss: 1.951
+  [1,   310] loss: 1.970
+  [1,   320] loss: 1.974
+  [1,   330] loss: 1.928
+  [1,   340] loss: 1.800
+  [1,   350] loss: 1.890
+  [1,   360] loss: 1.891
+  [1,   370] loss: 1.826
+  [1,   380] loss: 2.050
+  [1,   390] loss: 1.886
+  [1,   400] loss: 1.922
+  [1,   410] loss: 1.863
+  [1,   420] loss: 1.810
+  [1,   430] loss: 1.832
+  [1,   440] loss: 1.775
+  [1,   450] loss: 1.948
+  [1,   460] loss: 1.837
+  [1,   470] loss: 1.847
+  [1,   480] loss: 1.852
+  [2,    10] loss: 1.703
+  [2,    20] loss: 1.729
+  [2,    30] loss: 1.758
+  [2,    40] loss: 1.655
+  [2,    50] loss: 1.747
+  [2,    60] loss: 1.705
+  [2,    70] loss: 1.732
+  [2,    80] loss: 1.668
+  [2,    90] loss: 1.525
+  [2,   100] loss: 1.685
+  [2,   110] loss: 1.545
+  [2,   120] loss: 1.611
+  [2,   130] loss: 1.665
+  [2,   140] loss: 1.575
+  [2,   150] loss: 1.548
+  [2,   160] loss: 1.644
+  [2,   170] loss: 1.607
+  [2,   180] loss: 1.557
+  [2,   190] loss: 1.782
+  [2,   200] loss: 1.700
+  [2,   210] loss: 1.500
+  [2,   220] loss: 1.527
+  [2,   230] loss: 1.368
+  [2,   240] loss: 1.566
+  [2,   250] loss: 1.692
+  [2,   260] loss: 1.693
+  [2,   270] loss: 1.512
+  [2,   280] loss: 1.626
+  [2,   290] loss: 1.521
+  [2,   300] loss: 1.405
+  [2,   310] loss: 1.601
+  [2,   320] loss: 1.542
+  [2,   330] loss: 1.630
+  [2,   340] loss: 1.622
+  [2,   350] loss: 1.507
+  [2,   360] loss: 1.555
+  [2,   370] loss: 1.529
+  [2,   380] loss: 1.498
+  [2,   390] loss: 1.537
+  [2,   400] loss: 1.485
+  [2,   410] loss: 1.630
+  [2,   420] loss: 1.501
+  [2,   430] loss: 1.598
+  [2,   440] loss: 1.507
+  [2,   450] loss: 1.591
+  [2,   460] loss: 1.548
+  [2,   470] loss: 1.388
+  [2,   480] loss: 1.573
+  [3,    10] loss: 1.632
+  [3,    20] loss: 1.493
+  [3,    30] loss: 1.507
+  [3,    40] loss: 1.523
+  [3,    50] loss: 1.416
+  [3,    60] loss: 1.403
+  [3,    70] loss: 1.474
+  [3,    80] loss: 1.282
+  [3,    90] loss: 1.323
+  [3,   100] loss: 1.385
+  [3,   110] loss: 1.299
+  [3,   120] loss: 1.336
+  [3,   130] loss: 1.250
+  [3,   140] loss: 1.356
+  [3,   150] loss: 1.293
+  [3,   160] loss: 1.358
+  [3,   170] loss: 1.342
+  [3,   180] loss: 1.356
+  [3,   190] loss: 1.394
+  [3,   200] loss: 1.450
+  [3,   210] loss: 1.309
+  [3,   220] loss: 1.320
+  [3,   230] loss: 1.442
+  [3,   240] loss: 1.393
+  [3,   250] loss: 1.431
+  [3,   260] loss: 1.381
+  [3,   270] loss: 1.379
+  [3,   280] loss: 1.370
+  [3,   290] loss: 1.495
+  [3,   300] loss: 1.370
+  [3,   310] loss: 1.344
+  [3,   320] loss: 1.396
+  [3,   330] loss: 1.366
+  [3,   340] loss: 1.306
+  [3,   350] loss: 1.306
+  [3,   360] loss: 1.334
+  [3,   370] loss: 1.323
+  [3,   380] loss: 1.503
+  [3,   390] loss: 1.178
+  [3,   400] loss: 1.489
+  [3,   410] loss: 1.412
+  [3,   420] loss: 1.428
+  [3,   430] loss: 1.409
+  [3,   440] loss: 1.398
+  [3,   450] loss: 1.276
+  [3,   460] loss: 1.357
+  [3,   470] loss: 1.337
+  [3,   480] loss: 1.273
+  [4,    10] loss: 1.547
+  [4,    20] loss: 1.452
+  [4,    30] loss: 1.411
+  [4,    40] loss: 1.314
+  [4,    50] loss: 1.341
+  [4,    60] loss: 1.222
+  [4,    70] loss: 1.294
+  [4,    80] loss: 1.239
+  [4,    90] loss: 1.347
+  [4,   100] loss: 1.207
+  [4,   110] loss: 1.130
+  [4,   120] loss: 1.250
+  [4,   130] loss: 1.020
+  [4,   140] loss: 1.262
+  [4,   150] loss: 1.196
+  [4,   160] loss: 1.235
+  [4,   170] loss: 1.178
+  [4,   180] loss: 1.283
+  [4,   190] loss: 1.161
+  [4,   200] loss: 1.248
+  [4,   210] loss: 1.321
+  [4,   220] loss: 1.378
+  [4,   230] loss: 1.291
+  [4,   240] loss: 1.155
+  [4,   250] loss: 1.131
+  [4,   260] loss: 1.173
+  [4,   270] loss: 1.213
+  [4,   280] loss: 1.272
+  [4,   290] loss: 1.084
+  [4,   300] loss: 1.155
+  [4,   310] loss: 1.170
+  [4,   320] loss: 1.123
+  [4,   330] loss: 1.177
+  [4,   340] loss: 1.236
+  [4,   350] loss: 1.111
+  [4,   360] loss: 1.289
+  [4,   370] loss: 1.227
+  [4,   380] loss: 1.283
+  [4,   390] loss: 1.223
+  [4,   400] loss: 1.247
+  [4,   410] loss: 1.275
+  [4,   420] loss: 1.111
+  [4,   430] loss: 1.216
+  [4,   440] loss: 1.197
+  [4,   450] loss: 1.143
+  [4,   460] loss: 1.191
+  [4,   470] loss: 1.291
+  [4,   480] loss: 1.274
+  [5,    10] loss: 1.721
+  [5,    20] loss: 1.533
+  [5,    30] loss: 1.358
+  [5,    40] loss: 1.165
+  [5,    50] loss: 1.225
+  [5,    60] loss: 1.124
+  [5,    70] loss: 1.048
+  [5,    80] loss: 1.161
+  [5,    90] loss: 1.055
+  [5,   100] loss: 1.024
+  [5,   110] loss: 0.995
+  [5,   120] loss: 0.905
+  [5,   130] loss: 1.081
+  [5,   140] loss: 1.086
+  [5,   150] loss: 1.048
+  [5,   160] loss: 1.208
+  [5,   170] loss: 1.117
+  [5,   180] loss: 1.016
+  [5,   190] loss: 0.950
+  [5,   200] loss: 1.048
+  [5,   210] loss: 1.083
+  [5,   220] loss: 0.942
+  [5,   230] loss: 0.875
+  [5,   240] loss: 1.140
+  [5,   250] loss: 1.042
+  [5,   260] loss: 1.029
+  [5,   270] loss: 1.021
+  [5,   280] loss: 1.052
+  [5,   290] loss: 1.071
+  [5,   300] loss: 1.027
+  [5,   310] loss: 1.052
+  [5,   320] loss: 0.974
+  [5,   330] loss: 1.141
+  [5,   340] loss: 1.068
+  [5,   350] loss: 1.104
+  [5,   360] loss: 1.058
+  [5,   370] loss: 1.093
+  [5,   380] loss: 1.178
+  [5,   390] loss: 1.113
+  [5,   400] loss: 1.117
+  [5,   410] loss: 1.074
+  [5,   420] loss: 1.048
+  [5,   430] loss: 1.094
+  [5,   440] loss: 1.026
+  [5,   450] loss: 1.105
+  [5,   460] loss: 1.067
+  [5,   470] loss: 1.174
+  [5,   480] loss: 0.993
+  [6,    10] loss: 1.213
+  [6,    20] loss: 1.316
+  [6,    30] loss: 1.096
+  [6,    40] loss: 0.944
+  [6,    50] loss: 1.072
+  [6,    60] loss: 0.889
+  [6,    70] loss: 0.936
+  [6,    80] loss: 0.923
+  [6,    90] loss: 0.988
+  [6,   100] loss: 0.983
+  [6,   110] loss: 0.988
+  [6,   120] loss: 0.979
+  [6,   130] loss: 1.012
+  [6,   140] loss: 1.022
+  [6,   150] loss: 0.933
+  [6,   160] loss: 0.904
+  [6,   170] loss: 0.943
+  [6,   180] loss: 0.898
+  [6,   190] loss: 0.886
+  [6,   200] loss: 1.024
+  [6,   210] loss: 0.936
+  [6,   220] loss: 0.885
+  [6,   230] loss: 1.023
+  [6,   240] loss: 0.907
+  [6,   250] loss: 0.884
+  [6,   260] loss: 0.959
+  [6,   270] loss: 0.918
+  [6,   280] loss: 1.020
+  [6,   290] loss: 1.017
+  [6,   300] loss: 0.993
+  [6,   310] loss: 1.036
+  [6,   320] loss: 0.963
+  [6,   330] loss: 0.922
+  [6,   340] loss: 0.907
+  [6,   350] loss: 0.953
+  [6,   360] loss: 0.998
+  [6,   370] loss: 1.070
+  [6,   380] loss: 0.982
+  [6,   390] loss: 1.133
+  [6,   400] loss: 1.024
+  [6,   410] loss: 1.017
+  [6,   420] loss: 0.943
+  [6,   430] loss: 1.023
+  [6,   440] loss: 1.054
+  [6,   450] loss: 1.013
+  [6,   460] loss: 1.073
+  [6,   470] loss: 0.900
+  [6,   480] loss: 0.993
+  [7,    10] loss: 1.239
+  [7,    20] loss: 1.290
+  [7,    30] loss: 1.063
+  [7,    40] loss: 1.043
+  [7,    50] loss: 1.087
+  [7,    60] loss: 1.078
+  [7,    70] loss: 0.936
+  [7,    80] loss: 0.933
+  [7,    90] loss: 0.835
+  [7,   100] loss: 0.851
+  [7,   110] loss: 0.781
+  [7,   120] loss: 0.864
+  [7,   130] loss: 0.931
+  [7,   140] loss: 0.884
+  [7,   150] loss: 0.917
+  [7,   160] loss: 0.868
+  [7,   170] loss: 1.080
+  [7,   180] loss: 0.926
+  [7,   190] loss: 0.856
+  [7,   200] loss: 0.811
+  [7,   210] loss: 0.836
+  [7,   220] loss: 0.805
+  [7,   230] loss: 0.942
+  [7,   240] loss: 0.899
+  [7,   250] loss: 0.881
+  [7,   260] loss: 0.952
+  [7,   270] loss: 0.923
+  [7,   280] loss: 0.839
+  [7,   290] loss: 0.877
+  [7,   300] loss: 0.930
+  [7,   310] loss: 1.004
+  [7,   320] loss: 0.860
+  [7,   330] loss: 0.907
+  [7,   340] loss: 0.894
+  [7,   350] loss: 0.878
+  [7,   360] loss: 0.918
+  [7,   370] loss: 0.893
+  [7,   380] loss: 1.000
+  [7,   390] loss: 0.838
+  [7,   400] loss: 0.985
+  [7,   410] loss: 0.899
+  [7,   420] loss: 0.914
+  [7,   430] loss: 0.855
+  [7,   440] loss: 0.952
+  [7,   450] loss: 0.861
+  [7,   460] loss: 0.933
+  [7,   470] loss: 0.920
+  [7,   480] loss: 0.816
+  [8,    10] loss: 1.109
+  [8,    20] loss: 1.020
+  [8,    30] loss: 0.885
+  [8,    40] loss: 0.925
+  [8,    50] loss: 0.974
+  [8,    60] loss: 0.924
+  [8,    70] loss: 0.839
+  [8,    80] loss: 0.828
+  [8,    90] loss: 0.782
+  [8,   100] loss: 0.747
+  [8,   110] loss: 0.825
+  [8,   120] loss: 0.804
+  [8,   130] loss: 0.875
+  [8,   140] loss: 0.776
+  [8,   150] loss: 0.892
+  [8,   160] loss: 0.830
+  [8,   170] loss: 0.883
+  [8,   180] loss: 0.735
+  [8,   190] loss: 0.813
+  [8,   200] loss: 0.858
+  [8,   210] loss: 0.876
+  [8,   220] loss: 0.760
+  [8,   230] loss: 0.825
+  [8,   240] loss: 0.724
+  [8,   250] loss: 0.740
+  [8,   260] loss: 0.823
+  [8,   270] loss: 0.863
+  [8,   280] loss: 0.795
+  [8,   290] loss: 0.808
+  [8,   300] loss: 0.871
+  [8,   310] loss: 0.930
+  [8,   320] loss: 0.876
+  [8,   330] loss: 0.803
+  [8,   340] loss: 0.793
+  [8,   350] loss: 0.743
+  [8,   360] loss: 0.736
+  [8,   370] loss: 0.838
+  [8,   380] loss: 0.730
+  [8,   390] loss: 0.861
+  [8,   400] loss: 0.808
+  [8,   410] loss: 0.803
+  [8,   420] loss: 0.832
+  [8,   430] loss: 0.859
+  [8,   440] loss: 0.888
+  [8,   450] loss: 0.876
+  [8,   460] loss: 0.838
+  [8,   470] loss: 0.828
+  [8,   480] loss: 0.831
+  Learning rate: 0.001000
+  [9,    10] loss: 0.772
+  [9,    20] loss: 0.856
+  [9,    30] loss: 0.610
+  [9,    40] loss: 0.640
+  [9,    50] loss: 0.527
+  [9,    60] loss: 0.523
+  [9,    70] loss: 0.425
+  [9,    80] loss: 0.483
+  [9,    90] loss: 0.474
+  [9,   100] loss: 0.425
+  [9,   110] loss: 0.493
+  [9,   120] loss: 0.374
+  [9,   130] loss: 0.456
+  [9,   140] loss: 0.452
+  [9,   150] loss: 0.409
+  [9,   160] loss: 0.449
+  [9,   170] loss: 0.404
+  [9,   180] loss: 0.387
+  [9,   190] loss: 0.414
+  [9,   200] loss: 0.354
+  [9,   210] loss: 0.356
+  [9,   220] loss: 0.420
+  [9,   230] loss: 0.396
+  [9,   240] loss: 0.344
+  [9,   250] loss: 0.339
+  [9,   260] loss: 0.443
+  [9,   270] loss: 0.347
+  [9,   280] loss: 0.402
+  [9,   290] loss: 0.318
+  [9,   300] loss: 0.336
+  [9,   310] loss: 0.364
+  [9,   320] loss: 0.439
+  [9,   330] loss: 0.397
+  [9,   340] loss: 0.334
+  [9,   350] loss: 0.353
+  [9,   360] loss: 0.371
+  [9,   370] loss: 0.380
+  [9,   380] loss: 0.413
+  [9,   390] loss: 0.343
+  [9,   400] loss: 0.313
+  [9,   410] loss: 0.374
+  [9,   420] loss: 0.379
+  [9,   430] loss: 0.330
+  [9,   440] loss: 0.388
+  [9,   450] loss: 0.332
+  [9,   460] loss: 0.307
+  [9,   470] loss: 0.381
+  [9,   480] loss: 0.346
+  [10,    10] loss: 0.303
+  [10,    20] loss: 0.356
+  [10,    30] loss: 0.286
+  [10,    40] loss: 0.322
+  [10,    50] loss: 0.290
+  [10,    60] loss: 0.359
+  [10,    70] loss: 0.256
+  [10,    80] loss: 0.333
+  [10,    90] loss: 0.287
+  [10,   100] loss: 0.325
+  [10,   110] loss: 0.312
+  [10,   120] loss: 0.300
+  [10,   130] loss: 0.311
+  [10,   140] loss: 0.330
+  [10,   150] loss: 0.329
+  [10,   160] loss: 0.334
+  [10,   170] loss: 0.346
+  [10,   180] loss: 0.253
+  [10,   190] loss: 0.329
+  [10,   200] loss: 0.274
+  [10,   210] loss: 0.306
+  [10,   220] loss: 0.386
+  [10,   230] loss: 0.285
+  [10,   240] loss: 0.308
+  [10,   250] loss: 0.262
+  [10,   260] loss: 0.259
+  [10,   270] loss: 0.289
+  [10,   280] loss: 0.292
+  [10,   290] loss: 0.341
+  [10,   300] loss: 0.292
+  [10,   310] loss: 0.307
+  [10,   320] loss: 0.271
+  [10,   330] loss: 0.349
+  [10,   340] loss: 0.313
+  [10,   350] loss: 0.351
+  [10,   360] loss: 0.303
+  [10,   370] loss: 0.303
+  [10,   380] loss: 0.328
+  [10,   390] loss: 0.286
+  [10,   400] loss: 0.361
+  [10,   410] loss: 0.280
+  [10,   420] loss: 0.188
+  [10,   430] loss: 0.308
+  [10,   440] loss: 0.314
+  [10,   450] loss: 0.292
+  [10,   460] loss: 0.296
+  [10,   470] loss: 0.316
+  [10,   480] loss: 0.296
+  [11,    10] loss: 0.283
+  [11,    20] loss: 0.276
+  [11,    30] loss: 0.336
+  [11,    40] loss: 0.327
+  [11,    50] loss: 0.304
+  [11,    60] loss: 0.247
+  [11,    70] loss: 0.291
+  [11,    80] loss: 0.354
+  [11,    90] loss: 0.298
+  [11,   100] loss: 0.285
+  [11,   110] loss: 0.273
+  [11,   120] loss: 0.208
+  [11,   130] loss: 0.267
+  [11,   140] loss: 0.258
+  [11,   150] loss: 0.241
+  [11,   160] loss: 0.293
+  [11,   170] loss: 0.264
+  [11,   180] loss: 0.297
+  [11,   190] loss: 0.322
+  [11,   200] loss: 0.260
+  [11,   210] loss: 0.261
+  [11,   220] loss: 0.279
+  [11,   230] loss: 0.213
+  [11,   240] loss: 0.255
+  [11,   250] loss: 0.238
+  [11,   260] loss: 0.310
+  [11,   270] loss: 0.241
+  [11,   280] loss: 0.244
+  [11,   290] loss: 0.285
+  [11,   300] loss: 0.256
+  [11,   310] loss: 0.260
+  [11,   320] loss: 0.261
+  [11,   330] loss: 0.279
+  [11,   340] loss: 0.207
+  [11,   350] loss: 0.245
+  [11,   360] loss: 0.259
+  [11,   370] loss: 0.298
+  [11,   380] loss: 0.261
+  [11,   390] loss: 0.248
+  [11,   400] loss: 0.273
+  [11,   410] loss: 0.312
+  [11,   420] loss: 0.264
+  [11,   430] loss: 0.304
+  [11,   440] loss: 0.251
+  [11,   450] loss: 0.291
+  [11,   460] loss: 0.257
+  [11,   470] loss: 0.255
+  [11,   480] loss: 0.216
+  [12,    10] loss: 0.229
+  [12,    20] loss: 0.272
+  [12,    30] loss: 0.270
+  [12,    40] loss: 0.246
+  [12,    50] loss: 0.245
+  [12,    60] loss: 0.241
+  [12,    70] loss: 0.229
+  [12,    80] loss: 0.208
+  [12,    90] loss: 0.228
+  [12,   100] loss: 0.303
+  [12,   110] loss: 0.237
+  [12,   120] loss: 0.204
+  [12,   130] loss: 0.279
+  [12,   140] loss: 0.213
+  [12,   150] loss: 0.179
+  [12,   160] loss: 0.204
+  [12,   170] loss: 0.228
+  [12,   180] loss: 0.276
+  [12,   190] loss: 0.218
+  [12,   200] loss: 0.252
+  [12,   210] loss: 0.254
+  [12,   220] loss: 0.276
+  [12,   230] loss: 0.240
+  [12,   240] loss: 0.228
+  [12,   250] loss: 0.225
+  [12,   260] loss: 0.268
+  [12,   270] loss: 0.274
+  [12,   280] loss: 0.203
+  [12,   290] loss: 0.224
+  [12,   300] loss: 0.211
+  [12,   310] loss: 0.264
+  [12,   320] loss: 0.226
+  [12,   330] loss: 0.212
+  [12,   340] loss: 0.240
+  [12,   350] loss: 0.271
+  [12,   360] loss: 0.250
+  [12,   370] loss: 0.258
+  [12,   380] loss: 0.184
+  [12,   390] loss: 0.289
+  [12,   400] loss: 0.271
+  [12,   410] loss: 0.263
+  [12,   420] loss: 0.220
+  [12,   430] loss: 0.187
+  [12,   440] loss: 0.249
+  [12,   450] loss: 0.250
+  [12,   460] loss: 0.311
+  [12,   470] loss: 0.197
+  [12,   480] loss: 0.306
+  [13,    10] loss: 0.183
+  [13,    20] loss: 0.218
+  [13,    30] loss: 0.238
+  [13,    40] loss: 0.204
+  [13,    50] loss: 0.220
+  [13,    60] loss: 0.223
+  [13,    70] loss: 0.182
+  [13,    80] loss: 0.173
+  [13,    90] loss: 0.220
+  [13,   100] loss: 0.175
+  [13,   110] loss: 0.218
+  [13,   120] loss: 0.202
+  [13,   130] loss: 0.232
+  [13,   140] loss: 0.242
+  [13,   150] loss: 0.201
+  [13,   160] loss: 0.219
+  [13,   170] loss: 0.212
+  [13,   180] loss: 0.200
+  [13,   190] loss: 0.241
+  [13,   200] loss: 0.246
+  [13,   210] loss: 0.233
+  [13,   220] loss: 0.240
+  [13,   230] loss: 0.201
+  [13,   240] loss: 0.210
+  [13,   250] loss: 0.200
+  [13,   260] loss: 0.241
+  [13,   270] loss: 0.241
+  [13,   280] loss: 0.184
+  [13,   290] loss: 0.240
+  [13,   300] loss: 0.228
+  [13,   310] loss: 0.223
+  [13,   320] loss: 0.236
+  [13,   330] loss: 0.276
+  [13,   340] loss: 0.185
+  [13,   350] loss: 0.206
+  [13,   360] loss: 0.185
+  [13,   370] loss: 0.223
+  [13,   380] loss: 0.202
+  [13,   390] loss: 0.192
+  [13,   400] loss: 0.254
+  [13,   410] loss: 0.182
+  [13,   420] loss: 0.215
+  [13,   430] loss: 0.175
+  [13,   440] loss: 0.195
+  [13,   450] loss: 0.182
+  [13,   460] loss: 0.229
+  [13,   470] loss: 0.195
+  [13,   480] loss: 0.255
+  [14,    10] loss: 0.180
+  [14,    20] loss: 0.155
+  [14,    30] loss: 0.215
+  [14,    40] loss: 0.229
+  [14,    50] loss: 0.190
+  [14,    60] loss: 0.216
+  [14,    70] loss: 0.168
+  [14,    80] loss: 0.206
+  [14,    90] loss: 0.202
+  [14,   100] loss: 0.182
+  [14,   110] loss: 0.187
+  [14,   120] loss: 0.185
+  [14,   130] loss: 0.207
+  [14,   140] loss: 0.234
+  [14,   150] loss: 0.198
+  [14,   160] loss: 0.185
+  [14,   170] loss: 0.199
+  [14,   180] loss: 0.187
+  [14,   190] loss: 0.151
+  [14,   200] loss: 0.198
+  [14,   210] loss: 0.153
+  [14,   220] loss: 0.159
+  [14,   230] loss: 0.250
+  [14,   240] loss: 0.169
+  [14,   250] loss: 0.210
+  [14,   260] loss: 0.217
+  [14,   270] loss: 0.206
+  [14,   280] loss: 0.202
+  [14,   290] loss: 0.242
+  [14,   300] loss: 0.168
+  [14,   310] loss: 0.208
+  [14,   320] loss: 0.228
+  [14,   330] loss: 0.237
+  [14,   340] loss: 0.197
+  [14,   350] loss: 0.205
+  [14,   360] loss: 0.164
+  [14,   370] loss: 0.198
+  [14,   380] loss: 0.189
+  [14,   390] loss: 0.214
+  [14,   400] loss: 0.168
+  [14,   410] loss: 0.164
+  [14,   420] loss: 0.243
+  [14,   430] loss: 0.230
+  [14,   440] loss: 0.211
+  [14,   450] loss: 0.188
+  [14,   460] loss: 0.190
+  [14,   470] loss: 0.223
+  [14,   480] loss: 0.217
+  [15,    10] loss: 0.210
+  [15,    20] loss: 0.194
+  [15,    30] loss: 0.220
+  [15,    40] loss: 0.242
+  [15,    50] loss: 0.191
+  [15,    60] loss: 0.186
+  [15,    70] loss: 0.185
+  [15,    80] loss: 0.225
+  [15,    90] loss: 0.201
+  [15,   100] loss: 0.224
+  [15,   110] loss: 0.220
+  [15,   120] loss: 0.175
+  [15,   130] loss: 0.162
+  [15,   140] loss: 0.207
+  [15,   150] loss: 0.208
+  [15,   160] loss: 0.155
+  [15,   170] loss: 0.185
+  [15,   180] loss: 0.146
+  [15,   190] loss: 0.173
+  [15,   200] loss: 0.168
+  [15,   210] loss: 0.188
+  [15,   220] loss: 0.186
+  [15,   230] loss: 0.178
+  [15,   240] loss: 0.167
+  [15,   250] loss: 0.169
+  [15,   260] loss: 0.209
+  [15,   270] loss: 0.155
+  [15,   280] loss: 0.235
+  [15,   290] loss: 0.148
+  [15,   300] loss: 0.185
+  [15,   310] loss: 0.169
+  [15,   320] loss: 0.195
+  [15,   330] loss: 0.191
+  [15,   340] loss: 0.215
+  [15,   350] loss: 0.187
+  [15,   360] loss: 0.150
+  [15,   370] loss: 0.149
+  [15,   380] loss: 0.177
+  [15,   390] loss: 0.241
+  [15,   400] loss: 0.207
+  [15,   410] loss: 0.179
+  [15,   420] loss: 0.213
+  [15,   430] loss: 0.205
+  [15,   440] loss: 0.181
+  [15,   450] loss: 0.195
+  [15,   460] loss: 0.237
+  [15,   470] loss: 0.184
+  [15,   480] loss: 0.199
+  Learning rate: 0.000100
+  [16,    10] loss: 0.180
+  [16,    20] loss: 0.234
+  [16,    30] loss: 0.198
+  [16,    40] loss: 0.203
+  [16,    50] loss: 0.141
+  [16,    60] loss: 0.163
+  [16,    70] loss: 0.177
+  [16,    80] loss: 0.207
+  [16,    90] loss: 0.138
+  [16,   100] loss: 0.144
+  [16,   110] loss: 0.182
+  [16,   120] loss: 0.186
+  [16,   130] loss: 0.173
+  [16,   140] loss: 0.138
+  [16,   150] loss: 0.197
+  [16,   160] loss: 0.157
+  [16,   170] loss: 0.162
+  [16,   180] loss: 0.155
+  [16,   190] loss: 0.140
+  [16,   200] loss: 0.144
+  [16,   210] loss: 0.147
+  [16,   220] loss: 0.158
+  [16,   230] loss: 0.129
+  [16,   240] loss: 0.143
+  [16,   250] loss: 0.184
+  [16,   260] loss: 0.122
+  [16,   270] loss: 0.166
+  [16,   280] loss: 0.131
+  [16,   290] loss: 0.158
+  [16,   300] loss: 0.165
+  [16,   310] loss: 0.199
+  [16,   320] loss: 0.141
+  [16,   330] loss: 0.180
+  [16,   340] loss: 0.183
+  [16,   350] loss: 0.165
+  [16,   360] loss: 0.174
+  [16,   370] loss: 0.162
+  [16,   380] loss: 0.200
+  [16,   390] loss: 0.168
+  [16,   400] loss: 0.179
+  [16,   410] loss: 0.156
+  [16,   420] loss: 0.189
+  [16,   430] loss: 0.175
+  [16,   440] loss: 0.173
+  [16,   450] loss: 0.159
+  [16,   460] loss: 0.144
+  [16,   470] loss: 0.207
+  [16,   480] loss: 0.137
+  [17,    10] loss: 0.136
+  [17,    20] loss: 0.172
+  [17,    30] loss: 0.130
+  [17,    40] loss: 0.180
+  [17,    50] loss: 0.162
+  [17,    60] loss: 0.139
+  [17,    70] loss: 0.202
+  [17,    80] loss: 0.124
+  [17,    90] loss: 0.152
+  [17,   100] loss: 0.188
+  [17,   110] loss: 0.156
+  [17,   120] loss: 0.159
+  [17,   130] loss: 0.166
+  [17,   140] loss: 0.180
+  [17,   150] loss: 0.136
+  [17,   160] loss: 0.173
+  [17,   170] loss: 0.132
+  [17,   180] loss: 0.144
+  [17,   190] loss: 0.174
+  [17,   200] loss: 0.154
+  [17,   210] loss: 0.156
+  [17,   220] loss: 0.148
+  [17,   230] loss: 0.151
+  [17,   240] loss: 0.167
+  [17,   250] loss: 0.142
+  [17,   260] loss: 0.136
+  [17,   270] loss: 0.152
+  [17,   280] loss: 0.144
+  [17,   290] loss: 0.147
+  [17,   300] loss: 0.130
+  [17,   310] loss: 0.145
+  [17,   320] loss: 0.164
+  [17,   330] loss: 0.192
+  [17,   340] loss: 0.136
+  [17,   350] loss: 0.185
+  [17,   360] loss: 0.165
+  [17,   370] loss: 0.143
+  [17,   380] loss: 0.148
+  [17,   390] loss: 0.128
+  [17,   400] loss: 0.190
+  [17,   410] loss: 0.157
+  [17,   420] loss: 0.135
+  [17,   430] loss: 0.182
+  [17,   440] loss: 0.174
+  [17,   450] loss: 0.151
+  [17,   460] loss: 0.173
+  [17,   470] loss: 0.184
+  [17,   480] loss: 0.166
+  [18,    10] loss: 0.153
+  [18,    20] loss: 0.160
+  [18,    30] loss: 0.154
+  [18,    40] loss: 0.209
+  [18,    50] loss: 0.147
+  [18,    60] loss: 0.130
+  [18,    70] loss: 0.137
+  [18,    80] loss: 0.120
+  [18,    90] loss: 0.147
+  [18,   100] loss: 0.127
+  [18,   110] loss: 0.164
+  [18,   120] loss: 0.139
+  [18,   130] loss: 0.150
+  [18,   140] loss: 0.168
+  [18,   150] loss: 0.159
+  [18,   160] loss: 0.158
+  [18,   170] loss: 0.190
+  [18,   180] loss: 0.169
+  [18,   190] loss: 0.159
+  [18,   200] loss: 0.129
+  [18,   210] loss: 0.146
+  [18,   220] loss: 0.130
+  [18,   230] loss: 0.174
+  [18,   240] loss: 0.132
+  [18,   250] loss: 0.121
+  [18,   260] loss: 0.179
+  [18,   270] loss: 0.145
+  [18,   280] loss: 0.124
+  [18,   290] loss: 0.163
+  [18,   300] loss: 0.127
+  [18,   310] loss: 0.155
+  [18,   320] loss: 0.164
+  [18,   330] loss: 0.152
+  [18,   340] loss: 0.195
+  [18,   350] loss: 0.158
+  [18,   360] loss: 0.174
+  [18,   370] loss: 0.155
+  [18,   380] loss: 0.125
+  [18,   390] loss: 0.186
+  [18,   400] loss: 0.155
+  [18,   410] loss: 0.167
+  [18,   420] loss: 0.195
+  [18,   430] loss: 0.162
+  [18,   440] loss: 0.169
+  [18,   450] loss: 0.160
+  [18,   460] loss: 0.116
+  [18,   470] loss: 0.130
+  [18,   480] loss: 0.156
+
+  <img class="loss-graph" src="/Users/jayhirpara/Desktop/notebook images/vgg19bngraph.png">
+</pre>
+
+<pre class="code-block python">
+  <i>Let's see the accuracy of our vgg19_bn</i>
+
+
+  print("Validation  accuracy: %f" % accuracy(vgg19_bn, data['validation']))
+</pre>
+
+<pre class="code-block output">
+  Validation  accuracy: 0.807338
+</pre>
+
 </body>
 
 </html>
