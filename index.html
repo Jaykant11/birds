@@ -6,6 +6,92 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Final Project</title>
 </head>
+  
+<style>
+  h4 + ul{
+      margin-top:-1em;
+  }
+  .markdown a{
+  color: #f0f;
+  }
+  .markdown iframe{
+  display:block;
+          margin-left:auto;
+          margin-right:auto;
+          max-width:100%;
+  }
+  .top{
+      background-color: #001d;
+  position:relative;
+           z-index:1;
+  }
+  #dncircle{
+      z-index:2;
+  }
+  .top a{
+  position:relative;
+           z-index:3;
+  }
+  h1, h2, h3, h4, h5, p {
+    color:#333;
+    padding: 15px 85px 15px 85px;
+  }
+  .main{
+  font-size:18px;
+  width: 730px;
+  margin: 70px auto;
+  color: #333;
+  border: 1px #000 solid;
+  padding: 20px 40px 20px 40px;
+  -webkit-box-shadow: 0px 0 50px #f0f; -moz-box-shadow: 0px 0 30px #f0f; box-shadow: 0px 0 60px 10px #f0f;
+  background: #fff;
+  background: -moz-linear-gradient(top, #EEEEEE 0%, #FFFFFF 2%);
+  background: -webkit-gradient(linear, left top, left bottom, color-stop(0%,#EEEEEE), color-stop(2%,#FFFFFF)); 
+  font-family: "Myriad Pro", "Gill Sans", "Gill Sans MT", Calibri, sans-serif; color: #555;
+  }
+
+  html {
+      background-image:url("pattern.png");
+      background-repeat:repeat;
+      background-color:#001;
+  }
+
+  .code-block {
+    display: block;
+    font-size: 10px;
+
+  }
+
+  .python {
+    background-color: #eee;
+    border: 1px solid #999;
+    padding: 20px;
+  }
+
+  .loss-graph{
+    width: 400px;
+    height: 250px;
+  }
+
+  .submission-file{
+    width: 320px;
+    height: 250px;
+  }
+
+  .transform-birds{
+    width: 700px;
+    height: 200px;
+  }
+
+  h3 {
+    margin-left:-80px;
+  }
+
+  i{
+    color: rgb(26, 106, 186);
+  }
+
+</style>
 
 <body>
   <div id="content" class="main markdown">
@@ -15,7 +101,7 @@
     <iframe width="560" height="315" src="https://www.youtube.com/embed/6cu1yEPy7VE" title="model training (5 minutes)" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
   </p>
   <h2>About Our Project</h2>
-  <h3>Contributors:</h2>
+  <h3>Contributors:</h3>
   <ul>
     <li>Izabelle Valesco</li>
     <li>Tri Vuong</li>
@@ -25,91 +111,6 @@
   <p>This document represents the culmination of our efforts in the CSE455 Computer Vision course during the Winter 2023 quarter. Throughout this project, we have documented our journey as we delved deeper into the intricacies of convolutional neural networks and the process of image classification.
     We have use two pre-existing neural network architecture called vgg19_bn and Resnet50. Also, we have based off our code from the lectures and added our flavor to it.
   </p>
-  <style>
-    h4 + ul{
-        margin-top:-1em;
-    }
-    .markdown a{
-    color: #f0f;
-    }
-    .markdown iframe{
-    display:block;
-            margin-left:auto;
-            margin-right:auto;
-            max-width:100%;
-    }
-    .top{
-        background-color: #001d;
-    position:relative;
-             z-index:1;
-    }
-    #dncircle{
-        z-index:2;
-    }
-    .top a{
-    position:relative;
-             z-index:3;
-    }
-    h1, h2, h3, h4, h5, p {
-      color:#333;
-      padding: 15px 85px 15px 85px;
-    }
-    .main{
-    font-size:18px;
-    width: 730px;
-    margin: 70px auto;
-    color: #333;
-    border: 1px #000 solid;
-    padding: 20px 40px 20px 40px;
-    -webkit-box-shadow: 0px 0 50px #f0f; -moz-box-shadow: 0px 0 30px #f0f; box-shadow: 0px 0 60px 10px #f0f;
-    background: #fff;
-    background: -moz-linear-gradient(top, #EEEEEE 0%, #FFFFFF 2%);
-    background: -webkit-gradient(linear, left top, left bottom, color-stop(0%,#EEEEEE), color-stop(2%,#FFFFFF)); 
-    font-family: "Myriad Pro", "Gill Sans", "Gill Sans MT", Calibri, sans-serif; color: #555;
-    }
-
-    html {
-        background-image:url("pattern.png");
-        background-repeat:repeat;
-        background-color:#001;
-    }
-
-    .code-block {
-      display: block;
-      font-size: 10px;
-
-    }
-
-    .python {
-      background-color: #eee;
-      border: 1px solid #999;
-      padding: 20px;
-    }
-
-    .loss-graph{
-      width: 400px;
-      height: 250px;
-    }
-
-    .submission-file{
-      width: 320px;
-      height: 250px;
-    }
-
-    .transform-birds{
-      width: 700px;
-      height: 200px;
-    }
-
-    h3 {
-      margin-left:-80px;
-    }
-
-    i{
-      color: rgb(26, 106, 186);
-    }
-
-  </style>
 
   <h3>Imports</h3>
 
